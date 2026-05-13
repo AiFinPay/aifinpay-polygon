@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+/// @title B2BSplitter v1.0 — AiFinPay Standalone Payment Splitter
+/// @notice Splits incoming MATIC or ERC-20 payments between merchant, treasury,
+///         and IP creator. Owned by Gnosis Safe multisig.
+/// @dev Owner = Gnosis Safe (3-of-4). No upgradeability — redeploy to change logic.
+contract B2BSplitter is Ownable, ReentrancyGuard {
+
+    // ── Constants ──────────────────────────────────────────────────────────────
+    uint256 public constant BPS_DENOMINATOR = 10_000;
+
+    // ── Stablecoins (Polygon mainnet) ──────────────────────────────────────────
+    address public constant USDC = 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359;
+    address public constant USDT = 0xc2132D05D31c914a87C6611C10748AEb04B58e8F;
+
+    // ── Split Config ───────────────────────────────────────────────────────────
+    /// @notice Protocol fee (to treasury). Default: 100 bps = 1%
+    uint256 public treasuryBps = 100;
+    /// @notice IP creator royalty. Default: 1 bps = 0.01%
+    uint256 public ipCreatorBps = 1;
+    /// @notice Treasury wallet address
+    address public treasury;
+
+    // ── Events ─────────────────────────────────────────────────────────────────
+    event Payment(
+        address indexed payer,
+        address indexed merchant,
+        address indexed token,   // address(0) = MATIC
+        uint256 totalAmount,
+        uint256 merchantAmount,
+        uint256 treasuryAmount,
+        uint256 ipCreatorAmount,
+        string  orderId
+    );
+    event SplitUpdated(uint256 treasuryBps, uint256 ipCreatorBps);
+    event TreasuryUpdated(address newTreasury);
+
+    // ── Constructor ────────────────────────────────────────────────────────────
+    constructor(address initialOwner, address _treasury) {
+        require(_treasury != address(0), "Zero treasury");
+        _transferOwnership(initialOwner);
+        treasury = _treasury;
+    }
+
+    // ── MATIC Split ────────────────────────────────────────────────────────────
+    /// @notice Pay a merchant in MATIC. Automatically splits on-chain.
+    /// @param merchant    Merchant wallet address
+    /// @param ipCreator   IP creator address (receives royalty). Pass address(0) to skip.
+    /// @param orderId     Off-chain order reference
+    function payMatic(
+        address payable merchant,
+        address         ipCreator,
+        string calldata orderId
+    ) external payable nonReentrant {
+        require(msg.value > 0,            "Must send MATIC");
+        require(merchant != address(0),   "Zero merchant");
+
+        (uint256 merchantAmt, uint256 treasuryAmt, uint256 ipAmt) = _split(msg.value);
+
+        (bool s1,) = merchant.call{value: merchantAmt}("");
+        require(s1, "Merchant transfer failed");
+
+        (bool s2,) = payable(treasury).call{value: treasuryAmt}("");
+        require(s2, "Treasury transfer failed");
+
+        if (ipAmt > 0 && ipCreator != address(0)) {
+            (bool s3,) = payable(ipCreator).call{value: ipAmt}("");
+            require(s3, "IP creator transfer failed");
+        }
+
+        emit Payment(msg.sender, merchant, address(0), msg.value, merchantAmt, treasuryAmt, ipAmt, orderId);
+    }
+
+    // ── Stablecoin Split ───────────────────────────────────────────────────────
+    /// @notice Pay a merchant in USDC or USDT. Automatically splits on-chain.
+    /// @dev Caller must approve this contract for `amount` before calling.
+    function payStable(
+        address         token,
+        uint256         amount,
+        address         merchant,
+        address         ipCreator,
+        string calldata orderId
+    ) external nonReentrant {
+        require(token == USDC || token == USDT, "Unsupported token");
+        require(amount > 0,                     "Zero amount");
+        require(merchant != address(0),         "Zero merchant");
+
+        (uint256 merchantAmt, uint256 treasuryAmt, uint256 ipAmt) = _split(amount);
+
+        IERC20(token).transferFrom(msg.sender, merchant,  merchantAmt);
+        IERC20(token).transferFrom(msg.sender, treasury,  treasuryAmt);
+
+        if (ipAmt > 0 && ipCreator != address(0)) {
+            IERC20(token).transferFrom(msg.sender, ipCreator, ipAmt);
+        }
+
+        emit Payment(msg.sender, merchant, token, amount, merchantAmt, treasuryAmt, ipAmt, orderId);
+    }
+
+    // ── Admin (onlyOwner = Gnosis Safe multisig) ───────────────────────────────
+    function setSplit(uint256 _treasuryBps, uint256 _ipCreatorBps) external onlyOwner {
+        require(_treasuryBps + _ipCreatorBps < BPS_DENOMINATOR, "Fees exceed 100%");
+        treasuryBps  = _treasuryBps;
+        ipCreatorBps = _ipCreatorBps;
+        emit SplitUpdated(_treasuryBps, _ipCreatorBps);
+    }
+
+    function setTreasury(address _treasury) external onlyOwner {
+        require(_treasury != address(0), "Zero address");
+        treasury = _treasury;
+        emit TreasuryUpdated(_treasury);
+    }
+
+    // ── Internal ───────────────────────────────────────────────────────────────
+    function _split(uint256 total) internal view returns (
+        uint256 merchantAmt,
+        uint256 treasuryAmt,
+        uint256 ipAmt
+    ) {
+        treasuryAmt = (total * treasuryBps)  / BPS_DENOMINATOR;
+        ipAmt       = (total * ipCreatorBps) / BPS_DENOMINATOR;
+        merchantAmt = total - treasuryAmt - ipAmt;
+    }
+}

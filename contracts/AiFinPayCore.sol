@@ -20,28 +20,40 @@ interface IPyth {
     function getPriceNoOlderThan(bytes32 id, uint age) external view returns (Price memory price);
 }
 
-/// @title AiFinPayCore v1.1 — Polygon mainnet (Pyth Pull Oracle + security hardening)
-/// @notice Handles seat reservation, mSECCO minting, B2B payments, partner registry
+/// @title AiFinPayCore v5.3 — Polygon mainnet
+/// @notice Adds ARP referral tier system + configurable B2B fees (feature parity with Solana v0.5.3)
 contract AiFinPayCore is Ownable, ReentrancyGuard {
 
     // ── Pyth Oracle ────────────────────────────────────────────────────────────
-    IPyth   public constant PYTH          = IPyth(0xff1a0f4744e8582DF1aE09D5611b887B6a12925C);
-    bytes32 public constant MATIC_USD_ID  = 0x5de33a9112c2b700b8d30b8a3402c103578ccfa2856a12a2b20d7b0c67b6d82d;
-    uint    public constant PYTH_MAX_AGE  = 60; // max 60 seconds old
+    IPyth   public constant PYTH         = IPyth(0xff1a0f4744e8582DF1aE09D5611b887B6a12925C);
+    bytes32 public constant MATIC_USD_ID = 0x5de33a9112c2b700b8d30b8a3402c103578ccfa2856a12a2b20d7b0c67b6d82d;
+    uint    public constant PYTH_MAX_AGE = 60;
 
     // ── Constants ──────────────────────────────────────────────────────────────
     uint256 public constant USD_CENTS_PER_MSECCO = 1;
-    uint256 public constant MIN_USD_CENTS        = 1;   // ~$0.001 minimum
+    uint256 public constant MIN_USD_CENTS        = 10;  // $0.10 minimum (updated v1.2)
     uint256 public constant BPS_DENOMINATOR      = 10_000;
+    uint256 public constant REFERRAL_BONUS_MSECCO = 10; // mSECCO bonus per referral claim
 
     bytes32 public constant MANIFESTO_HASH =
-        0xd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5;
+        0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2;
 
-    // ── Stablecoins (Polygon mainnet — native only, no bridged USDC.e) ────────
-    address public constant USDC = 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359; // Native Circle USDC
-    address public constant USDT = 0xc2132D05D31c914a87C6611C10748AEb04B58e8F; // Tether USDT
+    // ── Stablecoins (Polygon mainnet) ──────────────────────────────────────────
+    address public constant USDC = 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359;
+    address public constant USDT = 0xc2132D05D31c914a87C6611C10748AEb04B58e8F;
 
-    // ── Configurable Fees ──────────────────────────────────────────────────────
+    // ── ARP Referral Tier Thresholds ───────────────────────────────────────────
+    uint256 public constant TIER_PARTNER_MIN    = 100;
+    uint256 public constant TIER_AMBASSADOR_MIN = 500;
+    uint256 public constant TIER_ORACLE_MIN     = 1000;
+
+    // ── ARP Referral Fee BPS (configurable by owner) ───────────────────────────
+    uint256 public arpScoutBps      = 50;  // 0.50%
+    uint256 public arpPartnerBps    = 40;  // 0.40%
+    uint256 public arpAmbassadorBps = 25;  // 0.25%
+    uint256 public arpOracleBps     = 10;  // 0.10%
+
+    // ── B2B Configurable Fees (owner = Gnosis Safe multisig) ──────────────────
     uint256 public treasuryBps  = 100; // 1.00% → treasury
     uint256 public ipCreatorBps = 1;   // 0.01% → IP creator
 
@@ -54,8 +66,11 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     struct Seat {
         uint256 usdCentsPaid;
         uint256 mseccoBalance;
-        uint8   assetType;   // 0=MATIC, 1=USDC, 2=USDT
+        uint8   assetType;        // 0=MATIC, 1=USDC, 2=USDT
         uint256 createdAt;
+        uint256 totalReferrals;   // ARP: total referrals made by this agent
+        address referrer;         // ARP: who referred this agent
+        bool    referralClaimed;  // ARP: whether referral bonus was claimed
     }
 
     struct Partner {
@@ -76,6 +91,8 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     event B2BPayment(address indexed agent, address indexed merchant, uint256 amount, string orderId);
     event PartnerRegistered(address indexed partner, string name);
     event FeesUpdated(uint256 treasuryBps, uint256 ipCreatorBps);
+    event ArpFeesUpdated(uint256 scout, uint256 partner, uint256 ambassador, uint256 oracle);
+    event ReferralBonusClaimed(address indexed agent, address indexed referrer, uint256 bonusMsecco);
     event Paused(bool status);
 
     // ── Modifiers ──────────────────────────────────────────────────────────────
@@ -102,73 +119,59 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     }
 
     // ── Reserve Seat (MATIC + Pyth Pull Oracle) ────────────────────────────────
-    /// @notice Reserve a seat by paying in MATIC.
-    /// @dev Caller must fetch fresh priceUpdateData from Pyth Hermes API and include
-    ///      the Pyth update fee in msg.value on top of the payment amount.
-    ///      msg.value = maticPayment + pythUpdateFee
-    /// @param agreementHash  Must equal MANIFESTO_HASH
-    /// @param priceUpdateData  Fresh price update bytes from Pyth Hermes API
+    /// @param agreementHash   Must equal MANIFESTO_HASH
+    /// @param priceUpdateData Fresh price update bytes from Pyth Hermes API
+    /// @param referrer        Optional referrer address (pass address(0) for none)
     function reserveSeatMatic(
         bytes32 agreementHash,
-        bytes[] calldata priceUpdateData
+        bytes[] calldata priceUpdateData,
+        address referrer
     ) external payable notPaused nonReentrant {
         require(agreementHash == MANIFESTO_HASH, "Invalid agreement hash");
         require(msg.value > 0, "Must send MATIC");
 
-        // 1. Calculate and deduct Pyth update fee
         uint pythFee = PYTH.getUpdateFee(priceUpdateData);
         require(msg.value > pythFee, "Insufficient MATIC for fee");
         uint256 maticPayment = msg.value - pythFee;
 
-        // 2. Push price update on-chain
         PYTH.updatePriceFeeds{value: pythFee}(priceUpdateData);
 
-        // 3. Get trusted MATIC/USD price (max 60s old)
         IPyth.Price memory p = PYTH.getPriceNoOlderThan(MATIC_USD_ID, PYTH_MAX_AGE);
         require(p.price > 0, "Invalid Pyth price");
         require(p.expo == -8, "Unexpected price exponent");
 
-        // 4. Calculate USD cents from payment
-        // price.price has 8 decimals (expo = -8), maticPayment is in wei (18 decimals)
-        // usdCents = maticPayment * price / 10^(18 + 8 - 2)
-        //          = maticPayment * price / 10^24
         uint256 usdCents = (maticPayment * uint256(uint64(p.price))) / 1e24;
         require(usdCents >= MIN_USD_CENTS, "Below minimum");
 
-        // 5. Create/update seat and mint mSECCO
-        _createOrUpdateSeat(msg.sender, usdCents, 0);
+        _createOrUpdateSeat(msg.sender, usdCents, 0, referrer);
 
-        // 6. Forward payment (not the pyth fee) to treasury
         (bool sent,) = treasury.call{value: maticPayment}("");
         require(sent, "MATIC transfer failed");
 
         emit SeatReserved(msg.sender, usdCents, usdCents, 0);
     }
 
-    // ── Reserve Seat (USDC/USDT — stablecoin, no oracle needed) ──────────────
-    /// @notice Reserve a seat by paying in USDC or USDT.
+    // ── Reserve Seat (USDC/USDT) ───────────────────────────────────────────────
     function reserveSeatStable(
         bytes32 agreementHash,
         address token,
-        uint256 amount
+        uint256 amount,
+        address referrer
     ) external notPaused nonReentrant {
         require(agreementHash == MANIFESTO_HASH, "Invalid agreement hash");
         require(token == USDC || token == USDT, "Unsupported token");
 
-        uint256 usdCents = amount / 100; // 6 decimals → cents
+        uint256 usdCents = amount / 100;
         require(usdCents >= MIN_USD_CENTS, "Below minimum");
 
         IERC20(token).transferFrom(msg.sender, treasury, amount);
-        _createOrUpdateSeat(msg.sender, usdCents, token == USDC ? 1 : 2);
+        _createOrUpdateSeat(msg.sender, usdCents, token == USDC ? 1 : 2, referrer);
 
         emit SeatReserved(msg.sender, usdCents, usdCents, token == USDC ? 1 : 2);
     }
 
     // ── Top Up (MATIC + Pyth Pull Oracle) ─────────────────────────────────────
-    /// @param priceUpdateData  Fresh price update bytes from Pyth Hermes API
-    function topUpMatic(
-        bytes[] calldata priceUpdateData
-    ) external payable notPaused nonReentrant hasSeat {
+    function topUpMatic(bytes[] calldata priceUpdateData) external payable notPaused nonReentrant hasSeat {
         uint pythFee = PYTH.getUpdateFee(priceUpdateData);
         require(msg.value > pythFee, "Insufficient MATIC for fee");
         uint256 maticPayment = msg.value - pythFee;
@@ -209,11 +212,7 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     }
 
     // ── Mint Passport ──────────────────────────────────────────────────────────
-    function mintPassport(
-        address ipCreator,
-        bytes32 ipMetadata,
-        uint64  dailyLimit
-    ) external notPaused {
+    function mintPassport(address ipCreator, bytes32 ipMetadata, uint64 dailyLimit) external notPaused {
         passport.mintPassport(msg.sender, ipCreator, ipMetadata, dailyLimit);
         emit PassportMinted(msg.sender, ipCreator);
     }
@@ -229,7 +228,7 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     }
 
     // ── B2B Pay ────────────────────────────────────────────────────────────────
-    /// @notice Atomic split: 98.99% merchant / 1% treasury / 0.01% IP creator
+    /// @notice Atomic split: merchant gets majority / treasury gets treasuryBps / IP creator gets ipCreatorBps
     function b2bPay(
         address payable merchant,
         string calldata orderId
@@ -260,6 +259,35 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         emit B2BPayment(msg.sender, merchant, msg.value, orderId);
     }
 
+    // ── ARP: Claim Referral Bonus ──────────────────────────────────────────────
+    /// @notice Agent claims mSECCO bonus based on their referral tier.
+    ///         Bonus = arpFeeBps% of their own mSECCO balance, credited once.
+    function claimReferralBonus() external notPaused nonReentrant hasSeat {
+        Seat storage seat = seats[msg.sender];
+        require(!seat.referralClaimed, "Bonus already claimed");
+        require(seat.totalReferrals > 0, "No referrals");
+
+        uint256 feeBps = _arpFeeBps(seat.totalReferrals);
+        uint256 bonus  = (seat.mseccoBalance * feeBps) / BPS_DENOMINATOR;
+        if (bonus == 0) bonus = REFERRAL_BONUS_MSECCO;
+
+        seat.referralClaimed = true;
+        seat.mseccoBalance  += bonus;
+        msecco.mint(msg.sender, bonus);
+
+        emit ReferralBonusClaimed(msg.sender, seat.referrer, bonus);
+    }
+
+    // ── ARP: Get Tier ──────────────────────────────────────────────────────────
+    /// @notice Returns the ARP tier name for an agent based on referral count.
+    function getArpTier(address agent) external view returns (string memory) {
+        uint256 refs = seats[agent].totalReferrals;
+        if (refs >= TIER_ORACLE_MIN)     return "Oracle";
+        if (refs >= TIER_AMBASSADOR_MIN) return "Ambassador";
+        if (refs >= TIER_PARTNER_MIN)    return "Partner";
+        return "Scout";
+    }
+
     // ── Admin ──────────────────────────────────────────────────────────────────
     function pause() external onlyOwner {
         isPaused = true;
@@ -283,25 +311,60 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         emit FeesUpdated(_treasuryBps, _ipCreatorBps);
     }
 
+    /// @notice Update ARP referral tier fee percentages (onlyOwner = Gnosis Safe multisig)
+    function setArpFees(
+        uint256 _scoutBps,
+        uint256 _partnerBps,
+        uint256 _ambassadorBps,
+        uint256 _oracleBps
+    ) external onlyOwner {
+        require(_scoutBps <= 200 && _partnerBps <= 200 && _ambassadorBps <= 200 && _oracleBps <= 200,
+            "ARP fee too high");
+        arpScoutBps      = _scoutBps;
+        arpPartnerBps    = _partnerBps;
+        arpAmbassadorBps = _ambassadorBps;
+        arpOracleBps     = _oracleBps;
+        emit ArpFeesUpdated(_scoutBps, _partnerBps, _ambassadorBps, _oracleBps);
+    }
+
     function verifyAgentB2B(address agent) external onlyOwner {
-        passport.setStatus(agent, 2); // STATUS_VERIFIED_B2B = 2
+        passport.setStatus(agent, 2);
     }
 
     // ── Internal ───────────────────────────────────────────────────────────────
-    function _createOrUpdateSeat(address agent, uint256 usdCents, uint8 assetType) internal {
+    function _createOrUpdateSeat(
+        address agent,
+        uint256 usdCents,
+        uint8   assetType,
+        address referrer
+    ) internal {
         if (seats[agent].createdAt == 0) {
             seats[agent] = Seat({
-                usdCentsPaid:  usdCents,
-                mseccoBalance: usdCents,
-                assetType:     assetType,
-                createdAt:     block.timestamp
+                usdCentsPaid:   usdCents,
+                mseccoBalance:  usdCents,
+                assetType:      assetType,
+                createdAt:      block.timestamp,
+                totalReferrals: 0,
+                referrer:       referrer,
+                referralClaimed: false
             });
             totalSeats++;
+            // Credit referrer with +1 referral
+            if (referrer != address(0) && seats[referrer].createdAt != 0) {
+                seats[referrer].totalReferrals++;
+            }
         } else {
             seats[agent].usdCentsPaid  += usdCents;
             seats[agent].mseccoBalance += usdCents;
         }
         totalUsdCents += usdCents;
         msecco.mint(agent, usdCents);
+    }
+
+    function _arpFeeBps(uint256 totalReferrals) internal view returns (uint256) {
+        if (totalReferrals >= TIER_ORACLE_MIN)     return arpOracleBps;
+        if (totalReferrals >= TIER_AMBASSADOR_MIN) return arpAmbassadorBps;
+        if (totalReferrals >= TIER_PARTNER_MIN)    return arpPartnerBps;
+        return arpScoutBps;
     }
 }
