@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./MSECCOToken.sol";
@@ -23,6 +24,10 @@ interface IPyth {
 /// @title AiFinPayCore v5.3 — Polygon mainnet
 /// @notice Adds ARP referral tier system + configurable B2B fees (feature parity with Solana v0.5.3)
 contract AiFinPayCore is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    // ── Stablecoin decimal constant (USDC/USDT = 6 decimals) ──────────────────
+    uint256 public constant STABLE_DECIMALS_DIVISOR = 10_000; // 1 cent = 10_000 base units
 
     // ── Pyth Oracle ────────────────────────────────────────────────────────────
     IPyth   public constant PYTH         = IPyth(0xff1a0f4744e8582DF1aE09D5611b887B6a12925C);
@@ -161,10 +166,10 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         require(agreementHash == MANIFESTO_HASH, "Invalid agreement hash");
         require(token == USDC || token == USDT, "Unsupported token");
 
-        uint256 usdCents = amount / 100;
+        uint256 usdCents = amount / STABLE_DECIMALS_DIVISOR;
         require(usdCents >= MIN_USD_CENTS, "Below minimum");
 
-        IERC20(token).transferFrom(msg.sender, treasury, amount);
+        IERC20(token).safeTransferFrom(msg.sender, treasury, amount);
         _createOrUpdateSeat(msg.sender, usdCents, token == USDC ? 1 : 2, referrer);
 
         emit SeatReserved(msg.sender, usdCents, usdCents, token == USDC ? 1 : 2);
@@ -199,10 +204,10 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     // ── Top Up (Stablecoin) ────────────────────────────────────────────────────
     function topUpStable(address token, uint256 amount) external notPaused nonReentrant hasSeat {
         require(token == USDC || token == USDT, "Unsupported token");
-        uint256 usdCents = amount / 100;
+        uint256 usdCents = amount / STABLE_DECIMALS_DIVISOR;
         require(usdCents >= MIN_USD_CENTS, "Below minimum");
 
-        IERC20(token).transferFrom(msg.sender, treasury, amount);
+        IERC20(token).safeTransferFrom(msg.sender, treasury, amount);
         seats[msg.sender].usdCentsPaid  += usdCents;
         seats[msg.sender].mseccoBalance += usdCents;
         totalUsdCents += usdCents;
@@ -212,7 +217,7 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     }
 
     // ── Mint Passport ──────────────────────────────────────────────────────────
-    function mintPassport(address ipCreator, bytes32 ipMetadata, uint64 dailyLimit) external notPaused {
+    function mintPassport(address ipCreator, bytes32 ipMetadata, uint64 dailyLimit) external notPaused nonReentrant {
         passport.mintPassport(msg.sender, ipCreator, ipMetadata, dailyLimit);
         emit PassportMinted(msg.sender, ipCreator);
     }
@@ -236,6 +241,7 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         require(msg.value > 0, "Must send MATIC");
         require(partners[merchant].active, "Partner not active");
         require(passport.isVerifiedB2B(msg.sender), "Agent not Verified_B2B");
+        require(passport.checkAndSpend(msg.sender, uint64(msg.value / 1e16)), "Daily spend limit exceeded");
 
         uint256 treasuryAmount  = (msg.value * treasuryBps) / BPS_DENOMINATOR;
         uint256 ipCreatorAmount = (msg.value * ipCreatorBps) / BPS_DENOMINATOR;

@@ -40,7 +40,10 @@ contract AgentPassport is ERC721, Ownable {
         _transferOwnership(initialOwner);
     }
 
+    /// @notice Set the AiFinPay core contract address — one-time only
     function setCore(address _core) external onlyOwner {
+        require(aifinpayCore == address(0), "Core already set");
+        require(_core != address(0), "Zero address");
         aifinpayCore = _core;
     }
 
@@ -56,9 +59,8 @@ contract AgentPassport is ERC721, Ownable {
         _tokenIdCounter++;
         tokenId = _tokenIdCounter;
 
-        _safeMint(agent, tokenId);
+        // ── Checks-Effects-Interactions: write state BEFORE external _safeMint call ──
         agentTokenId[agent] = tokenId;
-
         passports[tokenId] = Passport({
             ipCreator:    ipCreator,
             ipMetadata:   ipMetadata,
@@ -68,6 +70,8 @@ contract AgentPassport is ERC721, Ownable {
             lastResetDay: uint64(block.timestamp / 1 days),
             bornAt:       block.timestamp
         });
+
+        _safeMint(agent, tokenId);
     }
 
     /// @notice Update passport status — admin only via core

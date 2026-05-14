@@ -19,8 +19,10 @@ contract MSECCOToken is ERC20, Ownable {
         _transferOwnership(initialOwner);
     }
 
-    /// @notice Set the AiFinPay core contract address (called once after deploy)
+    /// @notice Set the AiFinPay core contract address — one-time only
     function setCore(address _core) external onlyOwner {
+        require(aifinpayCore == address(0), "Core already set");
+        require(_core != address(0), "Zero address");
         aifinpayCore = _core;
     }
 
