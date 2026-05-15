@@ -45,6 +45,11 @@ contract MSECCOToken is ERC20, Ownable {
         revert("mSECCO is non-transferable");
     }
 
+    /// @notice EVM-INFO-002: block approvals — no point approving a non-transferable token
+    function approve(address, uint256) public pure override returns (bool) {
+        revert("mSECCO is non-transferable");
+    }
+
     function decimals() public pure override returns (uint8) {
         return 2; // 1.00 mSECCO = 100 units (matches Solana: 1 USD = 100 mSECCO)
     }

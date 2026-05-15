@@ -2,14 +2,17 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 
-/// @title B2BSplitter v1.0 — AiFinPay Standalone Payment Splitter
+/// @title B2BSplitter v1.1 — AiFinPay Standalone Payment Splitter
 /// @notice Splits incoming MATIC or ERC-20 payments between merchant, treasury,
 ///         and IP creator. Owned by Gnosis Safe multisig.
-/// @dev Owner = Gnosis Safe (3-of-4). No upgradeability — redeploy to change logic.
-contract B2BSplitter is Ownable, ReentrancyGuard {
+/// @dev Owner = Gnosis Safe (4-of-4). No upgradeability — redeploy to change logic.
+contract B2BSplitter is Ownable, ReentrancyGuard, Pausable {
+    using SafeERC20 for IERC20; // EVM-HIGH-001: SafeERC20 for all token transfers
 
     // ── Constants ──────────────────────────────────────────────────────────────
     uint256 public constant BPS_DENOMINATOR = 10_000;
@@ -56,7 +59,7 @@ contract B2BSplitter is Ownable, ReentrancyGuard {
         address payable merchant,
         address         ipCreator,
         string calldata orderId
-    ) external payable nonReentrant {
+    ) external payable nonReentrant whenNotPaused {
         require(msg.value > 0,            "Must send MATIC");
         require(merchant != address(0),   "Zero merchant");
 
@@ -85,26 +88,36 @@ contract B2BSplitter is Ownable, ReentrancyGuard {
         address         merchant,
         address         ipCreator,
         string calldata orderId
-    ) external nonReentrant {
+    ) external nonReentrant whenNotPaused {
         require(token == USDC || token == USDT, "Unsupported token");
         require(amount > 0,                     "Zero amount");
         require(merchant != address(0),         "Zero merchant");
 
         (uint256 merchantAmt, uint256 treasuryAmt, uint256 ipAmt) = _split(amount);
 
-        IERC20(token).transferFrom(msg.sender, merchant,  merchantAmt);
-        IERC20(token).transferFrom(msg.sender, treasury,  treasuryAmt);
+        // EVM-HIGH-001: SafeERC20 — reverts on failed transfers (no silent failure)
+        IERC20(token).safeTransferFrom(msg.sender, merchant, merchantAmt);
+        IERC20(token).safeTransferFrom(msg.sender, treasury, treasuryAmt);
 
         if (ipAmt > 0 && ipCreator != address(0)) {
-            IERC20(token).transferFrom(msg.sender, ipCreator, ipAmt);
+            IERC20(token).safeTransferFrom(msg.sender, ipCreator, ipAmt);
         }
 
         emit Payment(msg.sender, merchant, token, amount, merchantAmt, treasuryAmt, ipAmt, orderId);
     }
 
     // ── Admin (onlyOwner = Gnosis Safe multisig) ───────────────────────────────
+
+    /// @notice EVM-MED-004: emergency pause — halts all payments instantly
+    function pause() external onlyOwner { _pause(); }
+
+    /// @notice Resume payments after an emergency pause
+    function unpause() external onlyOwner { _unpause(); }
+
     function setSplit(uint256 _treasuryBps, uint256 _ipCreatorBps) external onlyOwner {
         require(_treasuryBps + _ipCreatorBps < BPS_DENOMINATOR, "Fees exceed 100%");
+        // EVM-MED-003 mirror: prevent zero treasury fee breaking payment invariant
+        require(_treasuryBps >= 1, "Treasury fee must be at least 0.01%");
         treasuryBps  = _treasuryBps;
         ipCreatorBps = _ipCreatorBps;
         emit SplitUpdated(_treasuryBps, _ipCreatorBps);

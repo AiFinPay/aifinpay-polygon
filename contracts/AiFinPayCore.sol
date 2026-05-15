@@ -117,6 +117,10 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         address _passport,
         address _treasury
     ) {
+        // EVM-MED-002: validate all critical addresses at construction time
+        require(_msecco   != address(0), "Zero msecco");
+        require(_passport != address(0), "Zero passport");
+        require(_treasury != address(0), "Zero treasury");
         _transferOwnership(initialOwner);
         msecco   = MSECCOToken(_msecco);
         passport = AgentPassport(_passport);
@@ -169,8 +173,10 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         uint256 usdCents = amount / STABLE_DECIMALS_DIVISOR;
         require(usdCents >= MIN_USD_CENTS, "Below minimum");
 
-        IERC20(token).safeTransferFrom(msg.sender, treasury, amount);
+        // EVM-MED-001: effects before interactions (CEI pattern)
         _createOrUpdateSeat(msg.sender, usdCents, token == USDC ? 1 : 2, referrer);
+
+        IERC20(token).safeTransferFrom(msg.sender, treasury, amount);
 
         emit SeatReserved(msg.sender, usdCents, usdCents, token == USDC ? 1 : 2);
     }
@@ -207,17 +213,20 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         uint256 usdCents = amount / STABLE_DECIMALS_DIVISOR;
         require(usdCents >= MIN_USD_CENTS, "Below minimum");
 
-        IERC20(token).safeTransferFrom(msg.sender, treasury, amount);
+        // EVM-MED-001: effects before interactions (CEI pattern)
         seats[msg.sender].usdCentsPaid  += usdCents;
         seats[msg.sender].mseccoBalance += usdCents;
         totalUsdCents += usdCents;
         msecco.mint(msg.sender, usdCents);
 
+        IERC20(token).safeTransferFrom(msg.sender, treasury, amount);
+
         emit TopUp(msg.sender, usdCents, usdCents);
     }
 
     // ── Mint Passport ──────────────────────────────────────────────────────────
-    function mintPassport(address ipCreator, bytes32 ipMetadata, uint64 dailyLimit) external notPaused nonReentrant {
+    // EVM-LOW-002: hasSeat ensures agent has economic participation before passport issuance
+    function mintPassport(address ipCreator, bytes32 ipMetadata, uint64 dailyLimit) external notPaused nonReentrant hasSeat {
         passport.mintPassport(msg.sender, ipCreator, ipMetadata, dailyLimit);
         emit PassportMinted(msg.sender, ipCreator);
     }
@@ -241,7 +250,11 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         require(msg.value > 0, "Must send MATIC");
         require(partners[merchant].active, "Partner not active");
         require(passport.isVerifiedB2B(msg.sender), "Agent not Verified_B2B");
-        require(passport.checkAndSpend(msg.sender, uint64(msg.value / 1e16)), "Daily spend limit exceeded");
+
+        // EVM-HIGH-002: guard against micro-payment truncation bypassing daily limit
+        uint64 spendUnits = uint64(msg.value / 1e16);
+        require(spendUnits > 0, "Payment below minimum unit (0.01 MATIC)");
+        require(passport.checkAndSpend(msg.sender, spendUnits), "Daily spend limit exceeded");
 
         uint256 treasuryAmount  = (msg.value * treasuryBps) / BPS_DENOMINATOR;
         uint256 ipCreatorAmount = (msg.value * ipCreatorBps) / BPS_DENOMINATOR;
@@ -312,6 +325,8 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
 
     function setFees(uint256 _treasuryBps, uint256 _ipCreatorBps) external onlyOwner {
         require(_treasuryBps + _ipCreatorBps < BPS_DENOMINATOR, "Fees exceed 100%");
+        // EVM-MED-003: prevent treasuryBps=0 which would break b2bPay() invariant
+        require(_treasuryBps >= 1, "Treasury fee must be at least 0.01%");
         treasuryBps  = _treasuryBps;
         ipCreatorBps = _ipCreatorBps;
         emit FeesUpdated(_treasuryBps, _ipCreatorBps);
@@ -337,6 +352,11 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         passport.setStatus(agent, 2);
     }
 
+    // EVM-REC-002: mirror function to suspend a verified agent directly via core
+    function suspendAgentB2B(address agent) external onlyOwner {
+        passport.setStatus(agent, 3); // STATUS_SUSPENDED
+    }
+
     // ── Internal ───────────────────────────────────────────────────────────────
     function _createOrUpdateSeat(
         address agent,
@@ -355,8 +375,8 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
                 referralClaimed: false
             });
             totalSeats++;
-            // Credit referrer with +1 referral
-            if (referrer != address(0) && seats[referrer].createdAt != 0) {
+            // EVM-LOW-001: explicit self-referral guard (defensive, not relying on ordering)
+            if (referrer != address(0) && referrer != agent && seats[referrer].createdAt != 0) {
                 seats[referrer].totalReferrals++;
             }
         } else {
