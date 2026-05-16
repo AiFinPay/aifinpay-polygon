@@ -137,7 +137,7 @@ contract B2BSplitter is Ownable, ReentrancyGuard, Pausable {
         uint256 treasuryAmt,
         uint256 ipAmt
     ) {
-        require(total > MIN_PAYMENT, "MIN_PAYMENT not met");
+        require(total >= MIN_PAYMENT, "MIN_PAYMENT not met");
 
         treasuryAmt = (total * treasuryBps) / BPS_DENOMINATOR;
         ipAmt = (total * ipCreatorBps) / BPS_DENOMINATOR;
