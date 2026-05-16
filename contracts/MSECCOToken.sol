@@ -14,14 +14,6 @@ contract MSECCOToken is ERC20, Ownable {
 
     constructor(address initialOwner) ERC20("mSECCO", "mSECCO") Ownable(initialOwner) {}
 
-    /// @notice Set the AiFinPay core contract address — one-time only
-    function setCore(address _core) external onlyOwner {
-        if (aifinpayCore != address(0)) revert CoreAlreadySet();
-        if (_core == address(0)) revert ZeroAddress();
-        aifinpayCore = _core;
-        emit CoreSet(_core);
-    }
-
     /// @notice Mint mSECCO credits — only callable by AiFinPay core
     function mint(address _to, uint256 _amount) external onlyCore {
         _mint(_to, _amount);
@@ -32,22 +24,34 @@ contract MSECCOToken is ERC20, Ownable {
         _burn(_from, _amount);
     }
 
-    /// @notice Transfers are disabled — mSECCO is non-transferable, protocol-locked
-    function transfer(address, uint256) public pure override returns (bool) {
-        revert NonTransferable();
-    }
-
-    function transferFrom(address, address, uint256) public pure override returns (bool) {
-        revert NonTransferable();
-    }
-
-    /// @notice Block approvals — no point approving a non-transferable token
-    function approve(address, uint256) public pure override returns (bool) {
-        revert NonTransferable();
+    /// @notice Set the AiFinPay core contract address — one-time only
+    function setCore(address _core) external onlyOwner {
+        if (aifinpayCore != address(0)) revert CoreAlreadySet();
+        if (_core == address(0)) revert ZeroAddress();
+        aifinpayCore = _core;
+        emit CoreSet(_core);
     }
 
     function decimals() public pure override returns (uint8) {
         return 2;
+    }
+
+    /// @notice Hook — block all transfers, transferFrom, and approvals
+    /// mSECCO is non-transferable, protocol-locked
+    function _update(address _from, address _to, uint256 _amount) internal override {
+        // Allow minting (from == address(0)) and burning (to == address(0))
+        // Block all other transfers
+        if (_from != address(0) && _to != address(0)) {
+            revert NonTransferable();
+        }
+        super._update(_from, _to, _amount);
+    }
+
+    /// @notice Hook — block all approvals (except zero amounts for clearing)
+    function _approve(address, address, uint256 _amount, bool) internal override {
+        if (_amount > 0) {
+            revert NonTransferable();
+        }
     }
 
     modifier onlyCore() {

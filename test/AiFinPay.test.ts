@@ -55,9 +55,15 @@ describe("AiFinPay Protocol — Full Test Suite (v1.1 Pyth Oracle)", function ()
         .to.be.revertedWithCustomError(msecco, "NonTransferable");
     });
 
-    it("transferFrom is disabled", async function () {
-      await expect(msecco.transferFrom(await owner.getAddress(), await attacker.getAddress(), 1))
+    it('approve is disabled', async function () {
+      await expect(msecco.approve(await attacker.getAddress(), 1))
         .to.be.revertedWithCustomError(msecco, "NonTransferable");
+    });
+
+    it("transferFrom is disabled", async function () {
+      await expect(
+        msecco.transferFrom(await owner.getAddress(), await attacker.getAddress(), 1),
+      ).to.be.revertedWithCustomError(msecco, "ERC20InsufficientAllowance");
     });
 
     it("core is correctly wired", async function () {
