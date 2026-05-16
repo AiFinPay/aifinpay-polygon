@@ -1,3 +1,17 @@
 {
-  "extends": "solhint:recommended"
+  "extends": "solhint:recommended",
+  "rules": {
+    "func-visibility": ["error", { "ignoreConstructors": true }],
+    "not-rely-on-time": "off",
+    "no-inline-assembly": "off",
+    "compiler-version": ["error", "^0.8.20"],
+    "max-line-length": ["warn", 120],
+    "explicit-types": "off",
+    "no-global-import": "off",
+    "use-natspec": "off",
+    "const-name-snakecase": "off",
+    "var-name-mixedcase": "off",
+    "func-param-name-mixedcase": "off",
+    "func-name-mixedcase": "off"
+  }
 }

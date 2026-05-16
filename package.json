@@ -12,8 +12,8 @@
     "deploy": "hardhat run scripts/deploy.ts --network polygon",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network amoy",
     "lint": "solhint 'contracts/**/*.sol'",
-    "lint:sol": "prettier --write 'contracts/**/*.sol'",
-    "lint:check": "prettier --check 'contracts/**/*.sol'"
+    "prettify": "prettier --write 'contracts/**/*.sol'",
+    "prettify:check": "prettier --check 'contracts/**/*.sol'"
   },
   "keywords": [
     "aifinpay",
