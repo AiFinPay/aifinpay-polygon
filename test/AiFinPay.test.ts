@@ -1,11 +1,11 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { Signer, Contract, ZeroHash, parseEther, formatUnits, formatEther } from "ethers";
+import { Signer, ZeroHash, parseEther } from "ethers";
+import { AgentPassport, AiFinPayCore, MockPyth, MSECCOToken } from "../typechain-types";
 
 describe("AiFinPay Protocol — Full Test Suite (v1.1 Pyth Oracle)", function () {
-
   let owner: Signer, treasury: Signer, agent: Signer, merchant: Signer, ipCreator: Signer, attacker: Signer;
-  let msecco: Contract, passport: Contract, core: Contract, mockPyth: Contract;
+  let msecco: MSECCOToken, passport: AgentPassport, core: AiFinPayCore, mockPyth: MockPyth;
 
   const priceUpdateData: string[] = [];
   const PYTH_FEE = 1n;
