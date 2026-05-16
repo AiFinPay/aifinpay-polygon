@@ -1,7 +1,6 @@
-// @ts-ignore
 import { ethers } from "hardhat";
 import { Signer } from "ethers";
-import { AgentPassport, AiFinPayCore, MockPyth, MSECCOToken } from "../typechain-types";
+import { AgentPassport, AiFinPayCore, MockPyth, MSECCOToken, B2BSplitter } from "../typechain-types";
 
 export interface ProtocolContracts {
   owner: Signer;
@@ -14,6 +13,10 @@ export interface ProtocolContracts {
   passport: AgentPassport;
   core: AiFinPayCore;
   mockPyth: MockPyth;
+}
+
+export interface ProtocolWithSplitter extends ProtocolContracts {
+  splitter: B2BSplitter;
 }
 
 async function deployProtocol(): Promise<ProtocolContracts> {
@@ -41,4 +44,17 @@ async function deployProtocol(): Promise<ProtocolContracts> {
   return { owner, treasury, agent, merchant, ipCreator, attacker, msecco, passport, core, mockPyth };
 }
 
+async function deployProtocolWithSplitter(): Promise<ProtocolWithSplitter> {
+  const base = await deployProtocol();
+
+  const B2BSplitterFactory = await ethers.getContractFactory("B2BSplitter");
+  const splitter = (await B2BSplitterFactory.deploy(
+    await base.treasury.getAddress(),
+    await base.treasury.getAddress()
+  )) as unknown as B2BSplitter;
+
+  return { ...base, splitter };
+}
+
 export const fixture = deployProtocol;
+export const fixtureWithSplitter = deployProtocolWithSplitter;

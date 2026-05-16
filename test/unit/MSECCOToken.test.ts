@@ -2,10 +2,10 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { Signer } from "ethers";
-import { AgentPassport, AiFinPayCore, MockPyth, MSECCOToken } from "../typechain-types";
+import { AgentPassport, AiFinPayCore, MSECCOToken } from "../../typechain-types";
 import { fixture } from "../fixtures";
 
-describe("MSECCOToken — Hook-Based Non-Transferable Token", function () {
+describe("MSECCOToken", function () {
   let owner: Signer, treasury: Signer, agent: Signer, merchant: Signer, ipCreator: Signer, attacker: Signer;
   let msecco: MSECCOToken, passport: AgentPassport, core: AiFinPayCore;
 
