@@ -47,7 +47,6 @@ error Soulbound();
 error ZeroAmount();
 error ZeroMerchant();
 error PaymentTooSmall();
-error PaymentBelowMinimum();
 error PaymentTooSmallForTreasury();
 error PaymentTooSmallForRoyalty();
 error PaymentTooSmallForMerchant();

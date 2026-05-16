@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "../errors/Errors.sol";
+import "./errors/Errors.sol";
 
 /// @title AgentPassport — On-chain identity NFT for AI agents (Polygon)
 /// @notice Each agent wallet gets one passport. Non-transferable after mint.

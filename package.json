@@ -8,22 +8,30 @@
   },
   "scripts": {
     "test": "hardhat test",
-    "compile": "hardhat compile",
+    "build": "hardhat compile",
     "deploy": "hardhat run scripts/deploy.ts --network polygon",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network amoy",
     "lint:sol": "prettier --write 'contracts/**/*.sol'",
     "lint:check": "prettier --check 'contracts/**/*.sol'"
   },
-  "keywords": ["aifinpay", "polygon", "solidity", "erc20", "erc721"],
+  "keywords": [
+    "aifinpay",
+    "polygon",
+    "solidity",
+    "erc20",
+    "erc721"
+  ],
   "author": "AiFinPay",
   "license": "MIT",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.6.1"
+  },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "@openzeppelin/contracts": "^5.1.0",
-    "dotenv": "^16.4.7",
+    "dotenv": "^17.4.2",
     "hardhat": "^2.22.19",
-    "prettier": "^3.4.2",
-    "prettier-plugin-solidity": "^1.4.2",
+    "prettier": "^3.8.3",
+    "prettier-plugin-solidity": "^2.3.1",
     "typescript": "^5.7.3"
   }
 }

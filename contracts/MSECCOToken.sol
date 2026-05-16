@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "./errors/Errors.sol";
 
 /// @title mSECCO — AiFinPay Compute Credit Token (Polygon)
 /// @notice 1 USD = 100 mSECCO. No withdraw — credits are locked in-protocol.
