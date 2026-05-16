@@ -7,19 +7,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./MSECCOToken.sol";
 import "./AgentPassport.sol";
-
-// ── Pyth Interface (Pull Oracle) ───────────────────────────────────────────────
-interface IPyth {
-    struct Price {
-        int64  price;
-        uint64 conf;
-        int32  expo;
-        uint   publishTime;
-    }
-    function getUpdateFee(bytes[] calldata updateData) external view returns (uint feeAmount);
-    function updatePriceFeeds(bytes[] calldata updateData) external payable;
-    function getPriceNoOlderThan(bytes32 id, uint age) external view returns (Price memory price);
-}
+import "./interfaces/IPyth.sol";
 
 /// @title AiFinPayCore v5.3 — Polygon mainnet
 /// @notice Adds ARP referral tier system + configurable B2B fees (feature parity with Solana v0.5.3)
@@ -360,13 +348,13 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     }
 
     function verifyAgentB2B(address agent) external onlyOwner {
-        passport.setStatus(agent, 2);
+        passport.setStatus(agent, AgentPassport.PassportStatus.VERIFIED_B2B);
         emit AgentVerifiedB2B(agent);
     }
 
     // EVM-REC-002: mirror function to suspend a verified agent directly via core
     function suspendAgentB2B(address agent) external onlyOwner {
-        passport.setStatus(agent, 3); // STATUS_SUSPENDED
+        passport.setStatus(agent, AgentPassport.PassportStatus.SUSPENDED);
         emit AgentSuspendedB2B(agent);
     }
 

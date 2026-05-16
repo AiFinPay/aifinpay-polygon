@@ -8,15 +8,17 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 /// @notice Each agent wallet gets one passport. Non-transferable after mint.
 contract AgentPassport is ERC721, Ownable {
 
-    uint8 public constant STATUS_BORN        = 0;
-    uint8 public constant STATUS_ACTIVE      = 1;
-    uint8 public constant STATUS_VERIFIED_B2B = 2;
-    uint8 public constant STATUS_SUSPENDED   = 3;
+    enum PassportStatus {
+        BORN,
+        ACTIVE,
+        VERIFIED_B2B,
+        SUSPENDED
+    }
 
     struct Passport {
         address ipCreator;    // wallet that gets 0.01% royalty on B2B payments
         bytes32 ipMetadata;   // IPFS CID or metadata hash
-        uint8   status;
+        PassportStatus status;
         uint64  dailyLimit;   // max mSECCO spend per day (in mSECCO units)
         uint64  currentSpent; // spent today
         uint64  lastResetDay; // unix day of last reset
@@ -68,7 +70,7 @@ contract AgentPassport is ERC721, Ownable {
         passports[tokenId] = Passport({
             ipCreator:    ipCreator,
             ipMetadata:   ipMetadata,
-            status:       STATUS_BORN,
+            status:       PassportStatus.BORN,
             dailyLimit:   dailyLimit,
             currentSpent: 0,
             lastResetDay: uint64(block.timestamp / 1 days),
@@ -79,7 +81,7 @@ contract AgentPassport is ERC721, Ownable {
     }
 
     /// @notice Update passport status — admin only via core
-    function setStatus(address agent, uint8 status) external onlyCore {
+    function setStatus(address agent, PassportStatus status) external onlyCore {
         uint256 tokenId = agentTokenId[agent];
         require(tokenId != 0, "No passport");
         passports[tokenId].status = status;
@@ -115,7 +117,7 @@ contract AgentPassport is ERC721, Ownable {
     function isVerifiedB2B(address agent) external view returns (bool) {
         uint256 tokenId = agentTokenId[agent];
         if (tokenId == 0) return false;
-        return passports[tokenId].status == STATUS_VERIFIED_B2B;
+        return passports[tokenId].status == PassportStatus.VERIFIED_B2B;
     }
 
     /// @notice Soulbound — non-transferable after mint
