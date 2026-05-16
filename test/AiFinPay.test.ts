@@ -3,71 +3,241 @@ import { ethers } from "hardhat";
 import { Signer, ZeroHash, parseEther } from "ethers";
 import { AgentPassport, AiFinPayCore, MockPyth, MSECCOToken } from "../typechain-types";
 
+interface ProtocolContracts {
+  owner: Signer;
+  treasury: Signer;
+  agent: Signer;
+  merchant: Signer;
+  ipCreator: Signer;
+  attacker: Signer;
+  msecco: MSECCOToken;
+  passport: AgentPassport;
+  core: AiFinPayCore;
+  mockPyth: MockPyth;
+}
+
+let snapshotId: string | null = null;
+
+async function deployProtocol(): Promise<ProtocolContracts> {
+  const [owner, treasury, agent, merchant, ipCreator, attacker] = await ethers.getSigners();
+
+  const MockPythFactory = await ethers.getContractFactory("MockPyth");
+  const mockPyth = (await MockPythFactory.deploy()) as unknown as MockPyth;
+
+  const MSECCOTokenFactory = await ethers.getContractFactory("MSECCOToken");
+  const AgentPassportFactory = await ethers.getContractFactory("AgentPassport");
+  const AiFinPayCoreFactory = await ethers.getContractFactory("AiFinPayCore");
+
+  const msecco = (await MSECCOTokenFactory.deploy(await owner.getAddress())) as unknown as MSECCOToken;
+  const passport = (await AgentPassportFactory.deploy(await owner.getAddress())) as unknown as AgentPassport;
+  const core = (await AiFinPayCoreFactory.deploy(
+    await owner.getAddress(),
+    await msecco.getAddress(),
+    await passport.getAddress(),
+    await treasury.getAddress()
+  )) as unknown as AiFinPayCore;
+
+  await msecco.setCore(await core.getAddress());
+  await passport.setCore(await core.getAddress());
+
+  if (!snapshotId) {
+    snapshotId = await ethers.provider.send("evm_snapshot", []);
+  }
+
+  return { owner, treasury, agent, merchant, ipCreator, attacker, msecco, passport, core, mockPyth };
+}
+
+async function resetProtocol() {
+  if (snapshotId) {
+    await ethers.provider.send("evm_revert", [snapshotId]);
+    snapshotId = await ethers.provider.send("evm_snapshot", []);
+  }
+}
+
+const fixture = deployProtocol;
+
 describe("AiFinPay Protocol — Full Test Suite (v1.1 Pyth Oracle)", function () {
   let owner: Signer, treasury: Signer, agent: Signer, merchant: Signer, ipCreator: Signer, attacker: Signer;
   let msecco: MSECCOToken, passport: AgentPassport, core: AiFinPayCore, mockPyth: MockPyth;
 
-  const priceUpdateData: string[] = [];
-  const PYTH_FEE = 1n;
-
   beforeEach(async function () {
-    [owner, treasury, agent, merchant, ipCreator, attacker] = await ethers.getSigners();
-
-    const MockPyth = await ethers.getContractFactory("MockPyth");
-    mockPyth = await MockPyth.deploy();
-
-    const MSECCOToken   = await ethers.getContractFactory("MSECCOToken");
-    const AgentPassport = await ethers.getContractFactory("AgentPassport");
-    const AiFinPayCore  = await ethers.getContractFactory("AiFinPayCore");
-
-    msecco   = await MSECCOToken.deploy(await owner.getAddress());
-    passport = await AgentPassport.deploy(await owner.getAddress());
-    core     = await AiFinPayCore.deploy(
-      await owner.getAddress(),
-      await msecco.getAddress(),
-      await passport.getAddress(),
-      await treasury.getAddress()
-    );
-
-    await msecco.setCore(await core.getAddress());
-    await passport.setCore(await core.getAddress());
+    await resetProtocol();
+    ({ owner, treasury, agent, merchant, ipCreator, attacker, msecco, passport, core, mockPyth } = await fixture());
   });
 
   describe("MSECCOToken", function () {
-    it("has correct name, symbol, decimals", async function () {
-      expect(await msecco.name()).to.equal("mSECCO");
-      expect(await msecco.symbol()).to.equal("mSECCO");
-      expect(await msecco.decimals()).to.equal(2);
+    describe("Metadata", function () {
+      it("has correct name, symbol, decimals", async function () {
+        expect(await msecco.name()).to.equal("mSECCO");
+        expect(await msecco.symbol()).to.equal("mSECCO");
+        expect(await msecco.decimals()).to.equal(2);
+      });
+
+      it("core is correctly wired", async function () {
+        expect(await msecco.aifinpayCore()).to.equal(await core.getAddress());
+      });
     });
 
-    it("only core can mint", async function () {
-      await expect(msecco.connect(attacker).mint(await attacker.getAddress(), 100))
-        .to.be.revertedWithCustomError(msecco, "OnlyCore");
+    describe("Core Access Control", function () {
+      it("non-core cannot mint", async function () {
+        await expect(msecco.connect(attacker).mint(await attacker.getAddress(), 100))
+          .to.be.revertedWithCustomError(msecco, "OnlyCore");
+      });
+
+      it("owner cannot mint (not core)", async function () {
+        await expect(msecco.connect(owner).mint(await owner.getAddress(), 100))
+          .to.be.revertedWithCustomError(msecco, "OnlyCore");
+      });
+
+      it("non-core cannot burn", async function () {
+        await expect(msecco.connect(attacker).burn(await agent.getAddress(), 100))
+          .to.be.revertedWithCustomError(msecco, "OnlyCore");
+      });
+
+      it("owner cannot burn (not core)", async function () {
+        await expect(msecco.connect(owner).burn(await owner.getAddress(), 100))
+          .to.be.revertedWithCustomError(msecco, "OnlyCore");
+      });
     });
 
-    it("only core can burn", async function () {
-      await expect(msecco.connect(attacker).burn(await attacker.getAddress(), 100))
-        .to.be.revertedWithCustomError(msecco, "OnlyCore");
+    describe("Transfer Blocking (via _update hook)", function () {
+      it("transfer is disabled (non-transferable)", async function () {
+        await expect(msecco.transfer(await attacker.getAddress(), 1))
+          .to.be.revertedWithCustomError(msecco, "NonTransferable");
+      });
+
+      it("transfer blocks any amount", async function () {
+        await expect(msecco.transfer(await attacker.getAddress(), 100))
+          .to.be.revertedWithCustomError(msecco, "NonTransferable");
+      });
+
+      it("transfer blocks even zero amount", async function () {
+        await expect(msecco.transfer(await attacker.getAddress(), 0))
+          .to.be.revertedWithCustomError(msecco, "NonTransferable");
+      });
+
+      it("transferFrom is blocked", async function () {
+        await expect(
+          msecco.transferFrom(await owner.getAddress(), await attacker.getAddress(), 1),
+        ).to.be.revertedWithCustomError(msecco, "ERC20InsufficientAllowance");
+      });
+
+      it("agent cannot transfer to merchant", async function () {
+        await expect(msecco.connect(agent).transfer(await merchant.getAddress(), 1000))
+          .to.be.revertedWithCustomError(msecco, "NonTransferable");
+      });
     });
 
-    it("transfer is disabled (non-transferable)", async function () {
-      await expect(msecco.transfer(await attacker.getAddress(), 1))
-        .to.be.revertedWithCustomError(msecco, "NonTransferable");
+    describe("Approval Blocking (via _approve hook)", function () {
+      it("approve is disabled for non-zero amount", async function () {
+        await expect(msecco.approve(await attacker.getAddress(), 1))
+          .to.be.revertedWithCustomError(msecco, "NonTransferable");
+      });
+
+      it("approve blocks any non-zero amount", async function () {
+        await expect(msecco.approve(await attacker.getAddress(), 100))
+          .to.be.revertedWithCustomError(msecco, "NonTransferable");
+      });
+
+      it("approve blocks large amounts", async function () {
+        await expect(msecco.approve(await attacker.getAddress(), ethers.MaxUint256))
+          .to.be.revertedWithCustomError(msecco, "NonTransferable");
+      });
+
+      it("approve zero amount is allowed", async function () {
+        await expect(msecco.approve(await attacker.getAddress(), 0))
+          .not.to.be.reverted;
+      });
+
+      it("approve from different address is blocked", async function () {
+        await expect(msecco.connect(agent).approve(await attacker.getAddress(), 1))
+          .to.be.revertedWithCustomError(msecco, "NonTransferable");
+      });
     });
 
-    it('approve is disabled', async function () {
-      await expect(msecco.approve(await attacker.getAddress(), 1))
-        .to.be.revertedWithCustomError(msecco, "NonTransferable");
+    describe("Core Setup & Configuration", function () {
+      it("setCore is one-time only", async function () {
+        await expect(msecco.setCore(await attacker.getAddress()))
+          .to.be.revertedWithCustomError(msecco, "CoreAlreadySet");
+      });
+
+      it("setCore reverts on zero address", async function () {
+        const MSECCOToken = await ethers.getContractFactory("MSECCOToken");
+        const newMsecco = (await MSECCOToken.deploy(await owner.getAddress())) as unknown as MSECCOToken;
+
+        await expect(newMsecco.connect(owner).setCore(ethers.ZeroAddress))
+          .to.be.revertedWithCustomError(newMsecco, "ZeroAddress");
+      });
+
+      it("only owner can call setCore", async function () {
+        const MSECCOToken = await ethers.getContractFactory("MSECCOToken");
+        const newMsecco = (await MSECCOToken.deploy(await owner.getAddress())) as unknown as MSECCOToken;
+
+        await expect(newMsecco.connect(attacker).setCore(await attacker.getAddress()))
+          .to.be.revertedWithCustomError(newMsecco, "OwnableUnauthorizedAccount");
+      });
     });
 
-    it("transferFrom is disabled", async function () {
-      await expect(
-        msecco.transferFrom(await owner.getAddress(), await attacker.getAddress(), 1),
-      ).to.be.revertedWithCustomError(msecco, "ERC20InsufficientAllowance");
-    });
+    describe("State Consistency", function () {
+      it("totalSupply equals sum of balances", async function () {
+        const coreAddr = await core.getAddress();
+        await ethers.provider.send("hardhat_impersonateAccount", [coreAddr]);
+        await ethers.provider.send("hardhat_setBalance", [coreAddr, "0x1000000000000000000"]);
+        const coreSigner = await ethers.getSigner(coreAddr);
 
-    it("core is correctly wired", async function () {
-      expect(await msecco.aifinpayCore()).to.equal(await core.getAddress());
+        const agentAddr = await agent.getAddress();
+        const merchantAddr = await merchant.getAddress();
+
+        await msecco.connect(coreSigner).mint(agentAddr, 3000);
+        await msecco.connect(coreSigner).mint(merchantAddr, 2000);
+
+        expect(await msecco.totalSupply()).to.equal(5000n);
+      });
+
+      it("totalSupply decreases after burn", async function () {
+        const coreAddr = await core.getAddress();
+        await ethers.provider.send("hardhat_impersonateAccount", [coreAddr]);
+        await ethers.provider.send("hardhat_setBalance", [coreAddr, "0x1000000000000000000"]);
+        const coreSigner = await ethers.getSigner(coreAddr);
+
+        const agentAddr = await agent.getAddress();
+        await msecco.connect(coreSigner).mint(agentAddr, 5000);
+
+        const initialSupply = await msecco.totalSupply();
+        await msecco.connect(coreSigner).burn(agentAddr, 2000);
+
+        expect(await msecco.totalSupply()).to.equal(initialSupply - 2000n);
+      });
+
+      it("cannot exceed 2 decimals in balance representation", async function () {
+        const coreAddr = await core.getAddress();
+        await ethers.provider.send("hardhat_impersonateAccount", [coreAddr]);
+        await ethers.provider.send("hardhat_setBalance", [coreAddr, "0x1000000000000000000"]);
+        const coreSigner = await ethers.getSigner(coreAddr);
+
+        const agentAddr = await agent.getAddress();
+
+        await msecco.connect(coreSigner).mint(agentAddr, 123);
+        const balance = await msecco.balanceOf(agentAddr);
+
+        expect(balance).to.equal(123n);
+      });
+
+      it("balance and allowance independent", async function () {
+        const coreAddr = await core.getAddress();
+        await ethers.provider.send("hardhat_impersonateAccount", [coreAddr]);
+        await ethers.provider.send("hardhat_setBalance", [coreAddr, "0x1000000000000000000"]);
+        const coreSigner = await ethers.getSigner(coreAddr);
+
+        const agentAddr = await agent.getAddress();
+        const merchantAddr = await merchant.getAddress();
+
+        await msecco.connect(coreSigner).mint(agentAddr, 5000);
+
+        expect(await msecco.allowance(agentAddr, merchantAddr)).to.equal(0n);
+
+        expect(await msecco.balanceOf(agentAddr)).to.equal(5000n);
+      });
     });
   });
 
@@ -218,5 +388,4 @@ describe("AiFinPay Protocol — Full Test Suite (v1.1 Pyth Oracle)", function ()
       expect(await core.PYTH_MAX_AGE()).to.equal(60);
     });
   });
-
 });
