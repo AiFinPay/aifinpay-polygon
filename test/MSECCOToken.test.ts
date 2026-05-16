@@ -1,68 +1,16 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { Signer } from "ethers";
 import { AgentPassport, AiFinPayCore, MockPyth, MSECCOToken } from "../typechain-types";
-
-interface ProtocolContracts {
-  owner: Signer;
-  treasury: Signer;
-  agent: Signer;
-  merchant: Signer;
-  ipCreator: Signer;
-  attacker: Signer;
-  msecco: MSECCOToken;
-  passport: AgentPassport;
-  core: AiFinPayCore;
-  mockPyth: MockPyth;
-}
-
-let snapshotId: string | null = null;
-
-async function deployProtocol(): Promise<ProtocolContracts> {
-  const [owner, treasury, agent, merchant, ipCreator, attacker] = await ethers.getSigners();
-
-  const MockPythFactory = await ethers.getContractFactory("MockPyth");
-  const mockPyth = (await MockPythFactory.deploy()) as unknown as MockPyth;
-
-  const MSECCOTokenFactory = await ethers.getContractFactory("MSECCOToken");
-  const AgentPassportFactory = await ethers.getContractFactory("AgentPassport");
-  const AiFinPayCoreFactory = await ethers.getContractFactory("AiFinPayCore");
-
-  const msecco = (await MSECCOTokenFactory.deploy(await owner.getAddress())) as unknown as MSECCOToken;
-  const passport = (await AgentPassportFactory.deploy(await owner.getAddress())) as unknown as AgentPassport;
-  const core = (await AiFinPayCoreFactory.deploy(
-    await owner.getAddress(),
-    await msecco.getAddress(),
-    await passport.getAddress(),
-    await treasury.getAddress()
-  )) as unknown as AiFinPayCore;
-
-  await msecco.setCore(await core.getAddress());
-  await passport.setCore(await core.getAddress());
-
-  if (!snapshotId) {
-    snapshotId = await ethers.provider.send("evm_snapshot", []);
-  }
-
-  return { owner, treasury, agent, merchant, ipCreator, attacker, msecco, passport, core, mockPyth };
-}
-
-async function resetProtocol() {
-  if (snapshotId) {
-    await ethers.provider.send("evm_revert", [snapshotId]);
-    snapshotId = await ethers.provider.send("evm_snapshot", []);
-  }
-}
-
-const fixture = deployProtocol;
+import { fixture } from "../fixtures";
 
 describe("MSECCOToken — Hook-Based Non-Transferable Token", function () {
   let owner: Signer, treasury: Signer, agent: Signer, merchant: Signer, ipCreator: Signer, attacker: Signer;
   let msecco: MSECCOToken, passport: AgentPassport, core: AiFinPayCore;
 
   beforeEach(async function () {
-    await resetProtocol();
-    ({ owner, treasury, agent, merchant, ipCreator, attacker, msecco, passport, core } = await fixture());
+    ({ owner, treasury, agent, merchant, ipCreator, attacker, msecco, passport, core } = await loadFixture(fixture));
   });
 
   describe("Metadata", function () {
