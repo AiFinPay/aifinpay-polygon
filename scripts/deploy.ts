@@ -5,7 +5,7 @@ async function main() {
   console.log("Deploying with:", deployer.address);
   console.log("Balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "MATIC");
 
-  const treasury = deployer.address; // update to multisig after deploy
+  const treasury = "0xD31d82c4b35DABaA2ad7023C89A78A052D1f3c8e"; // Gnosis Safe 4-of-4 multisig
 
   // 1. Deploy mSECCO token
   console.log("\n1. Deploying MSECCOToken...");

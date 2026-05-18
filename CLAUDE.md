@@ -15,9 +15,9 @@ Deployed on **Polygon Mainnet**.
 ## Deployed Contracts
 | Contract | Address |
 |----------|---------|
-| AiFinPayCore | `0x8Ad9830D16b1f10333866a3f38C949CbB19f4BAD` |
-| AgentPassport | `0x66fFe91eE0B80f386EB07F97354e2889CD162185` |
-| MSECCOToken | `0x83936231c80fdF17eC2786BD7DcF09014552182B` |
+| AiFinPayCore | `0x24Bee0dfCD4d2f481E2f49A339F1C105a1611C7b` |
+| AgentPassport | `0xB385Cc32fe39CF5B5778DF0Df0e8E9978b5F662a` |
+| MSECCOToken | `0x1Fe2021336596655Fac72bC7bC40F7FFFA501d55` |
 | B2BSplitter | `0xE34Fc0E6694821c600Fa0955C0F74720ea6d8440` |
 
 ## Key Files
