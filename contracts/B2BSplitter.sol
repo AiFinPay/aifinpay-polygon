@@ -51,7 +51,7 @@ contract B2BSplitter is Ownable, ReentrancyGuard, Pausable {
         address _ipCreator,
         string calldata _orderId
     ) external payable nonReentrant whenNotPaused {
-        if (msg.value == 0) revert ZeroMatic();
+        if (msg.value == 0) revert ZeroNative();
         if (_merchant == address(0)) revert ZeroMerchant();
 
         (uint256 merchantAmt, uint256 treasuryAmt, uint256 ipAmt) = _split(msg.value);

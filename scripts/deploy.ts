@@ -1,11 +1,34 @@
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
+import * as fs from "fs";
+import * as path from "path";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-  console.log("Deploying with:", deployer.address);
-  console.log("Balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "MATIC");
+  const chainId = (await ethers.provider.getNetwork()).chainId;
 
-  const treasury = "0xD31d82c4b35DABaA2ad7023C89A78A052D1f3c8e"; // Gnosis Safe 4-of-4 multisig
+  console.log(`Deploying to: ${network.name} (chainId ${chainId})`);
+  console.log("Deployer:", deployer.address);
+  console.log("Balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "native");
+
+  // Load chain config
+  const configPath = path.join(__dirname, `../config/chains/${network.name}.json`);
+  if (!fs.existsSync(configPath)) {
+    throw new Error(`No config found for network "${network.name}". Create config/chains/${network.name}.json first.`);
+  }
+  const chainConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+  if (chainConfig.treasury === "DEPLOY_GNOSIS_SAFE_FIRST") {
+    throw new Error(`Treasury not set for ${network.name}. Deploy a Gnosis Safe on this chain first and update config/chains/${network.name}.json`);
+  }
+
+  const { pyth, usdc, usdt, nativeUsdId, treasury } = chainConfig;
+
+  console.log(`\nChain config loaded:`);
+  console.log(`  Pyth:         ${pyth}`);
+  console.log(`  USDC:         ${usdc}`);
+  console.log(`  USDT:         ${usdt}`);
+  console.log(`  NativeUsdId:  ${nativeUsdId}`);
+  console.log(`  Treasury:     ${treasury}`);
 
   // 1. Deploy mSECCO token
   console.log("\n1. Deploying MSECCOToken...");
@@ -28,7 +51,11 @@ async function main() {
     deployer.address,
     await msecco.getAddress(),
     await passport.getAddress(),
-    treasury
+    treasury,
+    pyth,
+    usdc,
+    usdt,
+    nativeUsdId
   );
   await core.waitForDeployment();
   console.log("   AiFinPayCore:", await core.getAddress());
@@ -39,13 +66,26 @@ async function main() {
   await passport.setCore(await core.getAddress());
   console.log("   Done.");
 
+  const mseccoAddr = await msecco.getAddress();
+  const passportAddr = await passport.getAddress();
+  const coreAddr = await core.getAddress();
+
   console.log("\n=== DEPLOYMENT COMPLETE ===");
-  console.log("MSECCOToken: ", await msecco.getAddress());
-  console.log("AgentPassport:", await passport.getAddress());
-  console.log("AiFinPayCore: ", await core.getAddress());
-  console.log("Treasury:     ", treasury);
-  console.log("\nVerify on Polygonscan:");
-  console.log(`npx hardhat verify --network polygon ${await core.getAddress()} ${deployer.address} ${await msecco.getAddress()} ${await passport.getAddress()} ${treasury}`);
+  console.log(`Network:       ${network.name}`);
+  console.log(`MSECCOToken:   ${mseccoAddr}`);
+  console.log(`AgentPassport: ${passportAddr}`);
+  console.log(`AiFinPayCore:  ${coreAddr}`);
+  console.log(`Treasury:      ${treasury}`);
+
+  console.log("\n--- Verify commands ---");
+  console.log(`npx hardhat verify --network ${network.name} ${mseccoAddr} ${deployer.address}`);
+  console.log(`npx hardhat verify --network ${network.name} ${passportAddr} ${deployer.address}`);
+  console.log(`npx hardhat verify --network ${network.name} ${coreAddr} ${deployer.address} ${mseccoAddr} ${passportAddr} ${treasury} ${pyth} ${usdc} ${usdt} ${nativeUsdId}`);
+
+  console.log("\n--- Next steps ---");
+  console.log("1. Run the verify commands above");
+  console.log("2. Transfer ownership to Gnosis Safe: core.transferOwnership(<safe_address>)");
+  console.log("3. Update CLAUDE.md with new contract addresses");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

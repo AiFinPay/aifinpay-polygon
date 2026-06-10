@@ -31,11 +31,21 @@ async function deployProtocol(): Promise<ProtocolContracts> {
 
   const msecco = (await MSECCOTokenFactory.deploy(await owner.getAddress())) as unknown as MSECCOToken;
   const passport = (await AgentPassportFactory.deploy(await owner.getAddress())) as unknown as AgentPassport;
+
+  // Mock USDC/USDT addresses for testing (any non-zero address works — logic tests don't call stable transfers)
+  const mockUsdc = "0x1000000000000000000000000000000000000001";
+  const mockUsdt = "0x1000000000000000000000000000000000000002";
+  const mockNativeUsdId = "0x5de33a9112c2b700b8d30b8a3402c103578ccfa2856a12a2b20d7b0c67b6d82d";
+
   const core = (await AiFinPayCoreFactory.deploy(
     await owner.getAddress(),
     await msecco.getAddress(),
     await passport.getAddress(),
-    await treasury.getAddress()
+    await treasury.getAddress(),
+    await mockPyth.getAddress(),
+    mockUsdc,
+    mockUsdt,
+    mockNativeUsdId
   )) as unknown as AiFinPayCore;
 
   await msecco.setCore(await core.getAddress());
