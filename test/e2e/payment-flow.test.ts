@@ -111,9 +111,9 @@ describe("E2E: Full User Journey", function () {
   });
 
   describe("Protocol Configuration", function () {
-    it("MANIFESTO_HASH is set correctly", async function () {
-      expect(await core.MANIFESTO_HASH()).to.equal(
-        "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+    it("manifestoHash is set to the real canonical hash", async function () {
+      expect(await core.manifestoHash()).to.equal(
+        "0x27b28e3044b56df3332a60c27604686a634f922a184f62398a4e2f85df19c699"
       );
     });
 
@@ -135,16 +135,16 @@ describe("E2E: Full User Journey", function () {
   });
 
   describe("Token Addresses", function () {
-    it("USDC is native Circle address on Polygon", async function () {
-      expect(await core.USDC()).to.equal("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359");
+    it("USDC is set from constructor", async function () {
+      expect(await core.USDC()).to.equal("0x1000000000000000000000000000000000000001");
     });
 
-    it("USDT is correct Tether address on Polygon", async function () {
-      expect(await core.USDT()).to.equal("0xc2132D05D31c914a87C6611C10748AEb04B58e8F");
+    it("USDT is set from constructor", async function () {
+      expect(await core.USDT()).to.equal("0x1000000000000000000000000000000000000002");
     });
 
-    it("Pyth contract address is correct", async function () {
-      expect(await core.PYTH()).to.equal("0xff1a0f4744e8582DF1aE09D5611b887B6a12925C");
+    it("Pyth contract is set from constructor", async function () {
+      expect(await core.PYTH()).to.not.equal(ethers.ZeroAddress);
     });
   });
 

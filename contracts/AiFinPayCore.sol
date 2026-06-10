@@ -10,7 +10,7 @@ import "./errors/Errors.sol";
 import "./MSECCOToken.sol";
 import "./AgentPassport.sol";
 
-/// @title AiFinPayCore v5.3 — Polygon mainnet
+/// @title AiFinPayCore v5.3 — Multichain
 /// @notice Adds ARP referral tier system + configurable B2B fees (feature parity with Solana v0.5.3)
 contract AiFinPayCore is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -31,14 +31,17 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         uint256 registeredAt;
     }
 
-    IPyth public constant PYTH = IPyth(0xff1a0f4744e8582DF1aE09D5611b887B6a12925C);
+    IPyth public immutable PYTH;
     MSECCOToken public msecco;
     AgentPassport public passport;
 
-    address public constant USDC = 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359;
-    address public constant USDT = 0xc2132D05D31c914a87C6611C10748AEb04B58e8F;
-    bytes32 public constant MATIC_USD_ID = 0x5de33a9112c2b700b8d30b8a3402c103578ccfa2856a12a2b20d7b0c67b6d82d;
-    bytes32 public constant MANIFESTO_HASH = 0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2;
+    address public immutable USDC;
+    address public immutable USDT;
+    bytes32 public immutable NATIVE_USD_ID;
+    /// @notice SHA-256 of the canonical manifesto. Governable — updatable by the
+    ///         owner (Gnosis Safe) via setManifestoHash so a wrong/changed hash
+    ///         never requires a redeploy again. Initialised to the real hash.
+    bytes32 public manifestoHash = 0x27b28e3044b56df3332a60c27604686a634f922a184f62398a4e2f85df19c699;
     uint256 public constant STABLE_DECIMALS_DIVISOR = 10_000;
     uint256 public constant PYTH_MAX_AGE = 60;
     uint256 public constant USD_CENTS_PER_MSECCO = 1;
@@ -73,46 +76,63 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
     event AgentVerifiedB2B(address indexed agent);
     event AgentSuspendedB2B(address indexed agent);
     event FeesUpdated(uint256 treasuryBps, uint256 ipCreatorBps);
+    event ManifestoHashUpdated(bytes32 indexed oldHash, bytes32 indexed newHash);
     event ArpFeesUpdated(uint256 scout, uint256 partner, uint256 ambassador, uint256 oracle);
     event ReferralBonusClaimed(address indexed agent, address indexed referrer, uint256 bonusMsecco);
     event Paused(bool status);
 
-    constructor(address initialOwner, address _msecco, address _passport, address _treasury) Ownable(initialOwner) {
+    constructor(
+        address initialOwner,
+        address _msecco,
+        address _passport,
+        address _treasury,
+        address _pyth,
+        address _usdc,
+        address _usdt,
+        bytes32 _nativeUsdId
+    ) Ownable(initialOwner) {
         if (_msecco == address(0)) revert ZeroMSECCO();
         if (_passport == address(0)) revert ZeroPassport();
         if (_treasury == address(0)) revert ZeroTreasury();
+        if (_pyth == address(0)) revert ZeroAddress();
+        if (_usdc == address(0)) revert ZeroAddress();
+        if (_usdt == address(0)) revert ZeroAddress();
         msecco = MSECCOToken(_msecco);
         passport = AgentPassport(_passport);
         treasury = _treasury;
+        PYTH = IPyth(_pyth);
+        USDC = _usdc;
+        USDT = _usdt;
+        NATIVE_USD_ID = _nativeUsdId;
     }
 
-    /// @param _agreementHash   Must equal MANIFESTO_HASH
+    /// @param _agreementHash   Must equal manifestoHash
     /// @param _priceUpdateData Fresh price update bytes from Pyth Hermes API
     /// @param _referrer        Optional referrer address (pass address(0) for none)
-    function reserveSeatMatic(
+    function reserveSeatNative(
         bytes32 _agreementHash,
         bytes[] calldata _priceUpdateData,
         address _referrer
     ) external payable notPaused nonReentrant {
-        if (_agreementHash != MANIFESTO_HASH) revert InvalidAgreementHash();
-        if (msg.value == 0) revert ZeroMatic();
+        if (_agreementHash != manifestoHash) revert InvalidAgreementHash();
+        if (msg.value == 0) revert ZeroNative();
 
         uint pythFee = PYTH.getUpdateFee(_priceUpdateData);
-        if (msg.value <= pythFee) revert InsufficientMaticForFee();
-        uint256 maticPayment = msg.value - pythFee;
+        if (msg.value <= pythFee) revert InsufficientNativeForFee();
+        uint256 nativePayment = msg.value - pythFee;
 
         PYTH.updatePriceFeeds{value: pythFee}(_priceUpdateData);
 
-        IPyth.Price memory p = PYTH.getPriceNoOlderThan(MATIC_USD_ID, PYTH_MAX_AGE);
+        IPyth.Price memory p = PYTH.getPriceNoOlderThan(NATIVE_USD_ID, PYTH_MAX_AGE);
         if (p.price <= 0) revert InvalidPythPrice();
         if (p.expo != -8) revert UnexpectedPriceExponent();
 
-        uint256 usdCents = (maticPayment * uint256(uint64(p.price))) / 1e24;
+        uint256 usdCents = (nativePayment * uint256(uint64(p.price))) / 1e24;
         if (usdCents < MIN_USD_CENTS) revert BelowMinimum();
 
         _createOrUpdateSeat(msg.sender, usdCents, 0, _referrer);
 
-        (bool sent, ) = treasury.call{value: maticPayment}("");
+        (bool sent, ) = treasury.call{value: nativePayment}("");
         if (!sent) revert TreasuryTransferFailed();
 
         emit SeatReserved(msg.sender, usdCents, usdCents, 0);
@@ -124,7 +144,7 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         uint256 _amount,
         address _referrer
     ) external notPaused nonReentrant {
-        if (_agreementHash != MANIFESTO_HASH) revert InvalidAgreementHash();
+        if (_agreementHash != manifestoHash) revert InvalidAgreementHash();
         if (_token != USDC && _token != USDT) revert UnsupportedToken();
 
         uint256 usdCents = _amount / STABLE_DECIMALS_DIVISOR;
@@ -137,18 +157,18 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         emit SeatReserved(msg.sender, usdCents, usdCents, _token == USDC ? 1 : 2);
     }
 
-    function topUpMatic(bytes[] calldata _priceUpdateData) external payable notPaused nonReentrant hasSeat {
+    function topUpNative(bytes[] calldata _priceUpdateData) external payable notPaused nonReentrant hasSeat {
         uint pythFee = PYTH.getUpdateFee(_priceUpdateData);
-        if (msg.value <= pythFee) revert InsufficientMaticForFee();
-        uint256 maticPayment = msg.value - pythFee;
+        if (msg.value <= pythFee) revert InsufficientNativeForFee();
+        uint256 nativePayment = msg.value - pythFee;
 
         PYTH.updatePriceFeeds{value: pythFee}(_priceUpdateData);
 
-        IPyth.Price memory p = PYTH.getPriceNoOlderThan(MATIC_USD_ID, PYTH_MAX_AGE);
+        IPyth.Price memory p = PYTH.getPriceNoOlderThan(NATIVE_USD_ID, PYTH_MAX_AGE);
         if (p.price <= 0) revert InvalidPythPrice();
         if (p.expo != -8) revert UnexpectedPriceExponent();
 
-        uint256 usdCents = (maticPayment * uint256(uint64(p.price))) / 1e24;
+        uint256 usdCents = (nativePayment * uint256(uint64(p.price))) / 1e24;
         if (usdCents < MIN_USD_CENTS) revert BelowMinimum();
 
         seats[msg.sender].usdCentsPaid += usdCents;
@@ -156,7 +176,7 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         totalUsdCents += usdCents;
         msecco.mint(msg.sender, usdCents);
 
-        (bool sent, ) = treasury.call{value: maticPayment}("");
+        (bool sent, ) = treasury.call{value: nativePayment}("");
         if (!sent) revert TreasuryTransferFailed();
 
         emit TopUp(msg.sender, usdCents, usdCents);
@@ -200,7 +220,7 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
 
     /// @notice Atomic split: merchant gets majority / treasury gets treasuryBps / IP creator gets ipCreatorBps
     function b2bPay(address payable _merchant, string calldata _orderId) external payable notPaused nonReentrant {
-        if (msg.value == 0) revert ZeroMatic();
+        if (msg.value == 0) revert ZeroNative();
         if (!partners[_merchant].active) revert PartnerNotActive();
         if (!passport.isVerifiedB2B(msg.sender)) revert AgentNotVerifiedB2B();
 
@@ -283,6 +303,14 @@ contract AiFinPayCore is Ownable, ReentrancyGuard {
         treasuryBps = _treasuryBps;
         ipCreatorBps = _ipCreatorBps;
         emit FeesUpdated(_treasuryBps, _ipCreatorBps);
+    }
+
+    /// @notice Update the manifesto hash (onlyOwner = Gnosis Safe multisig).
+    ///         Lets the multisig correct/rotate the agreement hash without a redeploy.
+    function setManifestoHash(bytes32 _manifestoHash) external onlyOwner {
+        bytes32 oldHash = manifestoHash;
+        manifestoHash = _manifestoHash;
+        emit ManifestoHashUpdated(oldHash, _manifestoHash);
     }
 
     /// @notice Update ARP referral tier fee percentages (onlyOwner = Gnosis Safe multisig)

@@ -1,8 +1,8 @@
 import { ethers } from "hardhat";
 
-const MSECCO   = "0x83936231c80fdF17eC2786BD7DcF09014552182B";
-const PASSPORT = "0x66fFe91eE0B80f386EB07F97354e2889CD162185";
-const CORE     = "0x8Ad9830D16b1f10333866a3f38C949CbB19f4BAD";
+const MSECCO   = "0x522FAB7dC9c0607c3664969c732b7Bef163B662d";
+const PASSPORT = "0x14Cd0CfD78A8F1DC6002D715d4147448a2DAc1Dd";
+const CORE     = "0x1071Bb1C827223D3D0115B0e1f114adAb9ceB94f";
 
 async function main() {
   const [deployer] = await ethers.getSigners();

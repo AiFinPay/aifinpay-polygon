@@ -14,10 +14,25 @@ describe("AiFinPayCore", function () {
   });
 
   describe("Configuration", function () {
-    it("MANIFESTO_HASH is set correctly", async function () {
-      expect(await core.MANIFESTO_HASH()).to.equal(
-        "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+    it("manifestoHash defaults to the real canonical hash", async function () {
+      expect(await core.manifestoHash()).to.equal(
+        "0x27b28e3044b56df3332a60c27604686a634f922a184f62398a4e2f85df19c699"
       );
+    });
+
+    it("owner (Safe) can update manifestoHash, non-owner cannot", async function () {
+      const newHash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+      await expect(core.connect(attacker).setManifestoHash(newHash)).to.be.reverted;
+      await expect(core.connect(owner).setManifestoHash(newHash))
+        .to.emit(core, "ManifestoHashUpdated");
+      expect(await core.manifestoHash()).to.equal(newHash);
+    });
+
+    it("reserveSeatStable reverts when the agreement hash is wrong", async function () {
+      const wrongHash = "0x2222222222222222222222222222222222222222222222222222222222222222";
+      await expect(
+        core.connect(agent).reserveSeatStable(wrongHash, await core.USDC(), 1_000_000, ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(core, "InvalidAgreementHash");
     });
 
     it("default treasury fee is 1%", async function () {
@@ -36,20 +51,20 @@ describe("AiFinPayCore", function () {
       expect(await core.PYTH_MAX_AGE()).to.equal(60);
     });
 
-    it("USDC is native Circle address on Polygon", async function () {
-      expect(await core.USDC()).to.equal("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359");
+    it("USDC is set from constructor", async function () {
+      expect(await core.USDC()).to.equal("0x1000000000000000000000000000000000000001");
     });
 
-    it("USDT is correct Tether address on Polygon", async function () {
-      expect(await core.USDT()).to.equal("0xc2132D05D31c914a87C6611C10748AEb04B58e8F");
+    it("USDT is set from constructor", async function () {
+      expect(await core.USDT()).to.equal("0x1000000000000000000000000000000000000002");
     });
 
-    it("Pyth contract address is correct", async function () {
-      expect(await core.PYTH()).to.equal("0xff1a0f4744e8582DF1aE09D5611b887B6a12925C");
+    it("Pyth contract is set from constructor", async function () {
+      expect(await core.PYTH()).to.equal(await mockPyth.getAddress());
     });
 
-    it("MATIC/USD feed ID is set", async function () {
-      expect(await core.MATIC_USD_ID()).to.equal(
+    it("NATIVE_USD_ID feed ID is set", async function () {
+      expect(await core.NATIVE_USD_ID()).to.equal(
         "0x5de33a9112c2b700b8d30b8a3402c103578ccfa2856a12a2b20d7b0c67b6d82d"
       );
     });
@@ -117,16 +132,16 @@ describe("AiFinPayCore", function () {
 
   describe("Pyth Oracle Integration", function () {
     it("no fake price can be injected — price comes from oracle not caller", async function () {
-      const fragment = core.interface.getFunction("reserveSeatMatic");
+      const fragment = core.interface.getFunction("reserveSeatNative");
       const paramNames = fragment.inputs.map(i => i.name);
-      expect(paramNames).to.not.include("maticUsdPrice");
+      expect(paramNames).to.not.include("nativeUsdPrice");
       expect(paramNames).to.include("_priceUpdateData");
     });
 
-    it("topUpMatic signature has no maticUsdPrice parameter", async function () {
-      const fragment = core.interface.getFunction("topUpMatic");
+    it("topUpNative signature has no nativeUsdPrice parameter", async function () {
+      const fragment = core.interface.getFunction("topUpNative");
       const paramNames = fragment.inputs.map(i => i.name);
-      expect(paramNames).to.not.include("maticUsdPrice");
+      expect(paramNames).to.not.include("nativeUsdPrice");
       expect(paramNames).to.include("_priceUpdateData");
     });
 
